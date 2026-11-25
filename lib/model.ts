@@ -27,7 +27,7 @@ export interface Row {
   };
   farm: {
     capital_usd: number; hold_days: number; fees_usd: number; hours: number;
-    ticket_usd: number; slice_usd: number; net_usd: number; net_per_hour_usd: number; verdict: 'FARM' | 'MARGINAL' | 'SKIP';
+    ticket_usd: number; sized_ticket_usd: number; slice_usd: number; net_usd: number; net_per_hour_usd: number; verdict: 'FARM' | 'MARGINAL' | 'SKIP';
   };
   farm_steps: string[];
 }
@@ -42,6 +42,7 @@ export interface Radar {
   size_a: number; size_b: number; size_r2: number; comps_n: number;
   median_change_7d: number; median_mcap_tvl: number;
   evidence: EvidenceRow[]; odds_evidence: OddsRow[];
+  odds_joint: { brier_in_sample: number; brier_walk_forward: number; kept: boolean };
   brier_model: number; brier_base: number; brier_wf_model: number; brier_wf_base: number;
   odds_peers_n: number; odds_token_rate: number; odds_age_coef_per_year: number;
   odds_acc: number; odds_acc_base: number; odds_acc_wf: number;
@@ -54,6 +55,7 @@ export interface Radar {
   thresholds: { farm_net: number; farm_per_hour: number; ticket_usd: number; drop_share: number; hour_rate_usd: number; deposit_plan_pct: number };
   wf_test_n: number;
   verdict_counts: { FARM: number; MARGINAL: number; SKIP: number };
+  verdict_counts_sized: { FARM: number; MARGINAL: number; SKIP: number };
   category_factors: { category: string; n: number; factor: number }[];
   comps: { tvl: number; mcap: number }[];
   rows: Row[];
@@ -487,6 +489,9 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
   const abAge = oddsAblate(['age']);
   const abAgeTvl = oddsAblate(['age', 'tvl']);
   const abAgeMom = oddsAblate(['age', 'mom']);
+  // The joint richer spec (B-style: age + log TVL + relative momentum together),
+  // judged against the same age-only baseline and the same 0.002 guard.
+  const abAgeTvlMom = oddsAblate(['age', 'tvl', 'mom']);
   // Same running-kept rule as the value model: each added term is judged
   // against the last KEPT odds model (age only), never against a model that
   // already contains a dropped term. Materiality guard: a Brier gain under
@@ -498,7 +503,12 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
     { term: '+ no-token age, years listed', brier_in_sample: abAge.inSample, brier_walk_forward: abAge.wf, decision: 'kept' },
     { term: '+ log TVL', brier_in_sample: abAgeTvl.inSample, brier_walk_forward: abAgeTvl.wf, decision: kept(abAgeTvl, abAge) ? 'kept' : 'tested, not kept' },
     { term: '+ relative momentum', brier_in_sample: abAgeMom.inSample, brier_walk_forward: abAgeMom.wf, decision: kept(abAgeMom, abAge) ? 'kept' : 'tested, not kept' },
+    { term: '+ log TVL + relative momentum, joint (B-style)', brier_in_sample: abAgeTvlMom.inSample, brier_walk_forward: abAgeTvlMom.wf, decision: kept(abAgeTvlMom, abAge) ? 'kept' : 'tested, not kept' },
   ];
+  // The joint spec is recorded, not adopted, unless it beats age-only in both
+  // tests (see the decision above): the odds model below stays age-only when
+  // the joint row reads "tested, not kept", and the page says so.
+  const oddsJoint = { brier_in_sample: abAgeTvlMom.inSample, brier_walk_forward: abAgeTvlMom.wf, kept: kept(abAgeTvlMom, abAge) };
 
   // --- board: watchlist 40 + early 138 + off-list 20 -----------------------
   const floor = snapshot.floor_usd;
@@ -525,12 +535,18 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
     const holdDays = holdDaysFor(ageD);
     const gas = gasOf(p.chains[0] ?? 'Ethereum');
     const { steps, fees, hours } = farmStepsFor(p, capital, holdDays, gas);
-    // Default deposit is the plan size, 0.02% of the row's TVL: a flat $1,000
-    // ticket makes the slice microscopic on every row (slice = implied x drop
-    // x ticket/TVL tops out near $45), so every row would read SKIP and the
-    // verdict column would rank nothing. The flat tickets ($100–$10,000) stay
-    // available on the dashboard; the formula is the same either way.
-    const ticket = PLAN_PCT * p.tvl_usd;
+    // Default deposit is a flat $1,000 ticket, stated on the cover: it is the
+    // one ticket every reader can compare across rows. At $1,000 the slice
+    // (implied x drop x ticket/TVL) tops out near $45, so almost every row
+    // reads SKIP and the verdict column ranks almost nothing — that is stated
+    // plainly on the page, not hidden. The sized position (0.02% of the row's
+    // TVL) stays available as an explicit option: it is the only ticket that
+    // makes the verdicts move, and its biggest figure (~$550,000 on
+    // Steakhouse, $2.75B TVL) is stated on the cover so the sized counts
+    // read honestly. The flat $100–$10,000 tickets are selectable too; the
+    // formula is the same either way, and the step costs are fixed.
+    const ticket = 1000;
+    const sizedTicket = PLAN_PCT * p.tvl_usd;
     const feesTotal = fees + 0.001 * capital; // + protocol fee 0.1% of the plan capital actually moved in the steps
     const slice = implied * DROP * (ticket / p.tvl_usd);
     const net = slice - feesTotal - hours * HOUR_RATE;
@@ -549,7 +565,7 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
       p10_usd: Math.max(1, Math.round(implied * Math.exp(band.q10))),
       p90_usd: Math.max(1, Math.round(implied * Math.exp(band.q90))),
       model: { size_curve_usd: Math.round(sizeCurve), category_factor: catFactor, category_n: catN, odds_raw: oddsRaw, kin_discount: kinDiscount, odds, size_a: fullFit.a, size_b: fullFit.b, range_band: bandLabel },
-      farm: { capital_usd: capital, hold_days: holdDays, fees_usd: feesTotal, hours, ticket_usd: ticket, slice_usd: slice, net_usd: net, net_per_hour_usd: netPerHour, verdict },
+      farm: { capital_usd: capital, hold_days: holdDays, fees_usd: feesTotal, hours, ticket_usd: ticket, sized_ticket_usd: sizedTicket, slice_usd: slice, net_usd: net, net_per_hour_usd: netPerHour, verdict },
       farm_steps: steps,
     };
   });
@@ -589,18 +605,27 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
     return { bucket, n: sub.length, token_rate: sub.length === 0 ? 0 : sub.filter((p) => !isPreToken(p)).length / sub.length };
   });
 
+  // Verdict counts at the default (flat $1,000) ticket — the view the cover
+  // shows first — and at the sized position, for the honest comparison.
   const verdictCounts = { FARM: 0, MARGINAL: 0, SKIP: 0 };
   for (const r of rows) verdictCounts[r.farm.verdict]++;
+  const verdictCountsSized = { FARM: 0, MARGINAL: 0, SKIP: 0 };
+  for (const r of rows) {
+    const sizedSlice = r.implied_value_usd * DROP * (r.farm.sized_ticket_usd / r.tvl_usd);
+    const sizedNet = sizedSlice - r.farm.fees_usd - r.farm.hours * HOUR_RATE;
+    const v = sizedNet > 25 && sizedNet / r.farm.hours > 25 ? 'FARM' : sizedNet > 0 ? 'MARGINAL' : 'SKIP';
+    verdictCountsSized[v]++;
+  }
   const totalImplied = rows.reduce((s, r) => s + r.implied_value_usd, 0);
   const radar: Radar = {
-    as_of: snapshot.as_of, source: snapshot.source, floor_usd: floor, model_version: 'v3-c size+category, odds age-only',
+    as_of: snapshot.as_of, source: snapshot.source, floor_usd: floor, model_version: 'v3-c.1 size+category, odds age-only, flat $1,000 default',
     watchlist_size: snapshot.watchlist.length, board_size: rows.length,
     early_size: rows.filter((r) => r.tier === 'Early').length,
     live_size: rows.filter((r) => r.tier === 'Off-list').length,
     total_protocols: protos.length, total_implied_usd: totalImplied,
     size_a: fullFit.a, size_b: fullFit.b, size_r2: fullFit.r2, comps_n: comps.length,
     median_change_7d: medChange, median_mcap_tvl: median(comps.map((p) => p.mcap / p.tvl_usd)),
-    evidence, odds_evidence,
+    evidence, odds_evidence, odds_joint: oddsJoint,
     brier_model: brierModel, brier_base: brierBase, brier_wf_model: brierWfModel, brier_wf_base: brierWfBase,
     odds_peers_n: peers.length, odds_token_rate: baseRate,
     odds_age_coef_per_year: oddsFit.w1 / oddsFit.sd,
@@ -611,14 +636,14 @@ export function buildRadar(snapshot: Snapshot): { board: Row[]; radar: Radar } {
     odds_age_buckets: oddsAgeBuckets,
     ledger, ledger_total: ledgerTotal,
     fee_table: GAS_USD,
-    fee_note: 'Fees per row: $2.00 bridge + gas on 5 of the 6 steps at the primary chain rate + a 0.1% protocol fee on the plan capital moved in the steps. Time is costed at $25/hour. Airdrop slice = implied value x drop share x (ticket / TVL). Default ticket is the plan size, 0.02% of the row\'s TVL; flat tickets of $100–$10,000 are selectable on the dashboard and change the slice only — the step costs are fixed.',
+    fee_note: 'Fees per row: $2.00 bridge + gas on 5 of the 6 steps at the primary chain rate + a 0.1% protocol fee on the plan capital moved in the steps. Time is costed at $25/hour. Airdrop slice = implied value x drop share x (ticket / TVL). Default ticket is a flat $1,000, stated on the cover; at $1,000 almost every row reads SKIP (the slice tops out near $45) and the page says so. The sized position (0.02% of the row\'s TVL, e.g. ~$550,000 on Steakhouse) is an explicit option; flat tickets of $100–$10,000 are selectable and change the slice only — the step costs are fixed.',
     thresholds: { farm_net: 25, farm_per_hour: 25, ticket_usd: 1000, drop_share: DROP, hour_rate_usd: HOUR_RATE, deposit_plan_pct: PLAN_PCT },
     wf_test_n: (() => {
       const dated = comps.filter((p) => p.listed_at !== null).sort((a, b) => (a.listed_at! < b.listed_at! ? -1 : 1));
       const cut = dated[Math.floor(dated.length / 2)]!.listed_at!;
       return comps.filter((p) => p.listed_at !== null && p.listed_at >= cut).length;
     })(),
-    verdict_counts: verdictCounts,
+    verdict_counts: verdictCounts, verdict_counts_sized: verdictCountsSized,
     category_factors: [...fullFit.catLog.entries()].map(([category, log]) => ({ category, n: fullFit.catN.get(category) ?? 0, factor: Math.exp(log) })).sort((a, b) => b.factor - a.factor),
     comps: comps.map((p) => ({ tvl: p.tvl_usd, mcap: p.mcap })).sort((a, b) => a.tvl - b.tvl),
     rows,

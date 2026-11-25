@@ -16,6 +16,8 @@ h2{font-size:17px;margin:0 0 8px}h3{font-size:14px;margin:14px 0 6px}
 .check{color:var(--green);font-size:12.5px;margin:8px 0 0}
 .integrity{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--green);border-radius:6px;padding:8px 12px;font-size:13px;margin:0 0 14px;color:var(--text)}
 .integrity b{color:var(--green)}
+.cover-note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:6px;padding:8px 12px;font-size:13px;margin:0 0 14px}
+.cover-note b{color:var(--amber)}
 .ledgerbar{display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin:10px 0}
 .ledgerbar div{height:100%}
 .ledgergrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 18px;font-size:12.5px}
@@ -52,5 +54,7 @@ td.keep{color:var(--green)}td.drop{color:var(--amber)}td.base{color:var(--muted)
 #detailBody ol{margin:6px 0;padding-left:20px}#detailBody li{margin-bottom:8px;font-size:13.5px}
 footer{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
 body.detail-only .kpis,body.detail-only .formula,body.detail-only section.panel:not(#detailPanel){display:none}
+body.detail-only .integrity,body.detail-only .cover-note,body.detail-only .sub{display:none}
+#top10Table td{padding:4px 8px}
 body.focus-board .kpis,body.focus-board .formula,body.focus-board section.panel:not(.boardpanel){display:none}
 @media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.twocol,.ledgergrid,#detailBody .grid{grid-template-columns:1fr}.top{flex-direction:column}}

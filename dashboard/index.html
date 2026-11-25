@@ -19,6 +19,20 @@
 
 <p class="formula" id="formulaLine"></p>
 <p class="integrity" id="integrityStrip"></p>
+<p class="integrity" id="ridgeLine"></p>
+<p class="cover-note" id="ageLine"></p>
+
+<section class="panel" id="top10Panel">
+  <h2>Top 10 — the board at a glance</h2>
+  <p class="note" id="top10Note"></p>
+  <div class="tablewrap"><table class="board" id="top10Table">
+    <thead><tr>
+      <th>#</th><th>Protocol</th><th>TVL</th><th>Token odds</th><th>If it launches</th>
+      <th>Implied value</th><th>Size-only</th><th>Verdict · net of fees</th>
+    </tr></thead>
+    <tbody id="top10Body"></tbody>
+  </table></div>
+</section>
 
 <section class="panel">
   <h2>Protocol accounting — the ledger</h2>
@@ -44,6 +58,12 @@
     </div>
   </div>
   <p class="note" id="rangeNote"></p>
+  <p class="note" id="controlNote"></p>
+  <div>
+    <h3>Category factors — the kept second term, fitted not hardcoded</h3>
+    <table class="ev" id="catFactors"></table>
+    <p class="note" id="catNote"></p>
+  </div>
   <p class="note"><b>Kin is not a fitted term.</b> A name-stem match to a token that already trades would leak: token families cluster, so a fitted kin term scores a flattering Brier in-sample and means the opposite of what a reader needs. Kin rows instead get a visible badge and a stated heuristic odds discount of ×0.5, because a sibling token already trades. The control term — the growth of another row — must not help; if it did, the test would be broken.</p>
 </section>
 
@@ -61,7 +81,7 @@
     <select id="fTier" aria-label="Tier"><option value="">All tiers</option><option>Watchlist</option><option>Early</option><option>Off-list</option></select>
     <select id="fCat" aria-label="Category"><option value="">All categories</option></select>
     <select id="fChain" aria-label="Chain"><option value="">All chains</option></select>
-    <label>Deposit <select id="fTicket"><option value="plan" selected>Plan size · 0.02% of TVL</option><option value="100">$100</option><option value="500">$500</option><option value="1000">$1,000</option><option value="5000">$5,000</option><option value="10000">$10,000</option></select></label>
+    <label>Deposit <select id="fTicket"><option value="plan">Sized position · 0.02% of TVL</option><option value="100">$100</option><option value="500">$500</option><option value="1000" selected>$1,000</option><option value="5000">$5,000</option><option value="10000">$10,000</option></select></label>
     <label>Drop share <select id="fDrop"><option value="0.035">3.5%</option><option value="0.07">7%</option><option value="0.10" selected>10%</option><option value="0.14">14%</option></select></label>
     <label>Horizon <select id="fHorizon"><option value="28">4 wk</option><option value="84" selected>12 wk</option><option value="182">26 wk</option><option value="9999">any</option></select></label>
     <button id="resetBtn" type="button">Reset</button>
@@ -69,12 +89,13 @@
     <button id="jsonBtn" type="button">JSON</button>
   </div>
   <p class="count" id="rowCount"></p>
+  <p class="count" id="ladderLine"></p>
   <div class="tablewrap"><table class="board" id="boardTable">
     <thead><tr>
       <th data-sort="rank">#</th><th data-sort="name">Protocol</th><th data-sort="tvl_usd">TVL</th>
       <th data-sort="rel_momentum_pp">7D vs market</th><th data-sort="age_days">No-token age</th>
       <th data-sort="odds">Token odds</th><th data-sort="size_curve_usd">If it launches</th>
-      <th data-sort="implied_value_usd">Implied value</th><th>P25–P75</th>
+      <th data-sort="implied_value_usd">Implied value</th><th data-sort="size_only">Size-only</th><th>P25–P75</th>
       <th data-sort="net">Verdict · net of fees</th><th data-sort="net_per_hour">Net / hour</th>
     </tr></thead>
     <tbody id="boardBody"></tbody>
@@ -89,7 +110,7 @@
 
 <footer>
   <p>Model: implied value = size curve × category factor × token odds. Size curve ln(mcap) = a + b·ln(TVL), fitted on the 128 comparables at runtime; category factor = shrunk median residual per category (k=32, n≥3). Odds = logistic on no-token age, fitted on the 645 peers with a listed date (base rate in the odds table), ×0.5 for kin rows. The odds are the peers' record, not a forecast: this page never says a token will launch, or when. A protocol "records no token" in DefiLlama's record; that is not proof it has none.</p>
-  <p>Farm verdicts: FARM if net &gt; $25 and net/hour &gt; $25; MARGINAL if net &gt; $0; otherwise SKIP. Net = airdrop slice − fees − time at $25/hour. Slice = implied value × drop share × (ticket / TVL). The default ticket is the plan size, 0.02% of each row's TVL: a flat $1,000 ticket makes the slice microscopic on every row (it tops out near $45), so every row would read SKIP and the verdict column would rank nothing — the flat $100–$10,000 tickets stay selectable and change the slice only; the step costs are fixed. Each plan deploys the minimum viable capital, sized from TVL ($50 below $100M, $100 at $100M+, $150 at $1B+, $250 at $5B+), and holds for 60 days if under 180 days old, 45 days if under a year, else 30 days. Fees: $2.00 bridge + gas on five steps at the primary-chain rate + 0.1% of the plan capital moved in the steps. No network is used by this page; all figures come from the sealed snapshot.</p>
+  <p>Farm verdicts: FARM if net &gt; $25 and net/hour &gt; $25; MARGINAL if net &gt; $0; otherwise SKIP. Net = airdrop slice − fees − time at $25/hour. Slice = implied value × drop share × (ticket / TVL). The default ticket is a flat $1,000, stated on the cover: at $1,000 almost every row reads SKIP (the slice tops out near $45), and the page says so instead of hiding it. The sized position (0.02% of each row's TVL, e.g. ~$550,000 on Steakhouse at $2.75B TVL) is an explicit option, and flat $100–$10,000 tickets are selectable; all of them change the slice only, the step costs are fixed. Each plan deploys the minimum viable capital, sized from TVL ($50 below $100M, $100 at $100M+, $150 at $1B+, $250 at $5B+), and holds for 60 days if under 180 days old, 45 days if under a year, else 30 days. Fees: $2.00 bridge + gas on five steps at the primary-chain rate + 0.1% of the plan capital moved in the steps. No network is used by this page; all figures come from the sealed snapshot.</p>
 </footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>

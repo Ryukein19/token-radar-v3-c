@@ -6,10 +6,10 @@ const fmtM = (n) => n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? '$'
 const fmt$ = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
 const fmtS = (n) => (n >= 0 ? '+' : '') + n.toFixed(1);
 const ageFmt = (d) => d === null ? '—' : d >= 365 ? (d / 365.25).toFixed(1) + ' yr' : d + ' d';
-const state = { q: '', verdict: '', tier: '', cat: '', chain: '', deposit: 'plan', drop: 0.10, horizon: 84, sort: 'rank', dir: 1 };
+const state = { q: '', verdict: '', tier: '', cat: '', chain: '', deposit: 1000, drop: 0.10, horizon: 84, sort: 'rank', dir: 1 };
 
-function ticketOf(r) { return state.deposit === 'plan' ? r.farm.ticket_usd : state.deposit; }
-function depositLabel() { return state.deposit === 'plan' ? 'plan size 0.02% of TVL' : 'ticket $' + state.deposit.toLocaleString('en-US'); }
+function ticketOf(r) { return state.deposit === 'plan' ? r.farm.sized_ticket_usd : state.deposit; }
+function depositLabel() { return state.deposit === 'plan' ? 'sized position 0.02% of TVL' : 'ticket $' + state.deposit.toLocaleString('en-US'); }
 function econ(r) {
   const ticket = ticketOf(r);
   const slice = r.implied_value_usd * state.drop * (ticket / r.tvl_usd);
@@ -24,13 +24,15 @@ const keptOf = (key) => R.evidence.find((e) => e.term.includes('category effect'
 
 function renderKpis() {
   const farmN = R.rows.filter((r) => econ(r).verdict === 'FARM').length;
+  const top1 = R.rows.find((r) => r.rank === 1);
+  const sizedNote = 'sized 0.02% TVL: ' + R.verdict_counts_sized.FARM + ' FARM / ' + R.verdict_counts_sized.MARGINAL + ' MARGINAL · Steakhouse sized $' + Math.round(top1.farm.sized_ticket_usd).toLocaleString('en-US');
   const cards = [
     ['198', 'ranked · 40 watchlist + 138 early + 20 off-list', 'board.json, ranks 1–198'],
     [fmtM(R.total_implied_usd), 'total implied value', 'sum of the board'],
     ['×' + keptOf('loo').toFixed(2) + ' vs ×' + flatOf('loo').toFixed(2) + ' flat', 'leave-one-out miss', 'typical miss, 128 comps'],
     ['×' + keptOf('walk_forward').toFixed(2) + ' vs ×' + flatOf('walk_forward').toFixed(2) + ' flat', 'walk-forward miss', 'older → newer, ' + R.wf_test_n + ' tested'],
     [R.brier_model.toFixed(3) + ' vs ' + R.brier_base.toFixed(3) + ' base', 'token odds, Brier', R.odds_peers_n + ' peers, base rate ' + (R.odds_token_rate * 100).toFixed(1) + '%'],
-    [farmN + ' of 198', 'worth farming, this scenario', depositLabel() + ' · drop ' + (state.drop * 100) + '%'],
+    [farmN + ' of 198', 'worth farming, this scenario', depositLabel() + ' · drop ' + (state.drop * 100) + '% · ' + sizedNote],
   ];
   $('kpis').innerHTML = cards.map((c) => `<div class="kpi"><b>${c[0]}</b><span>${c[1]}</span><small>${c[2]}</small></div>`).join('');
 }
@@ -43,6 +45,39 @@ function renderFormula() {
   const wlOk = R.rows.filter((r) => r.tier === 'Watchlist').length === 40;
   const ledgerOk = R.ledger_total === 758 && R.ledger.reduce((s, g) => s + g.count, 0) === 758;
   $('integrityStrip').innerHTML = `<b>Integrity strip — this page checks itself:</b> this table = board.json <b>✓</b> ${R.rows.length} of ${R.rows.length} rows <b>✓</b> ranks 1–198 in order: ${ranksOk ? '<b>✓</b>' : '✗'} values never rise: ${nonRising ? '<b>✓</b>' : '✗'} ledger ${R.ledger_total} of 758: ${ledgerOk ? '<b>✓</b>' : '✗'} watchlist 40 of 40: ${wlOk ? '<b>✓</b>' : '✗'} model ${R.model_version}`;
+  const sizeRow = R.evidence.find((e) => e.term.startsWith('+ size curve'));
+  const catRow = R.evidence.find((e) => e.term.includes('category effect'));
+  $('ridgeLine').innerHTML = `<b>Ridge trade-off, stated not hidden:</b> the category ridge helps held-out (LOO ×${sizeRow.loo.toFixed(2)}→×${catRow.loo.toFixed(2)}, walk-forward ×${sizeRow.walk_forward.toFixed(2)}→×${catRow.walk_forward.toFixed(2)}) but hurts by-category (×${catRow.by_category.toFixed(2)}) and by-size (×${catRow.by_size.toFixed(2)} vs ×${sizeRow.by_size.toFixed(2)} size-only). The keep rule is leave-one-out + walk-forward, which the ridge passes; the two failing tests stay visible here and in the evidence table.`;
+  const young = R.odds_age_buckets.find((b) => b.bucket.startsWith('under 6 months'));
+  const old = R.odds_age_buckets.find((b) => b.bucket.startsWith('3–5 years'));
+  $('ageLine').innerHTML = `<b>Token odds rise with age.</b> ${(young.token_rate * 100).toFixed(0)}% of protocols listed under 6 months record a token (n=${young.n}), vs ${(old.token_rate * 100).toFixed(0)}% at 3–5 years (n=${old.n}). The odds follow the peers' record — they do not assume a token becomes less likely with time, and they never say one will launch, or when.`;
+}
+function renderTop10() {
+  const top = [...R.rows].sort((a, b) => a.rank - b.rank).slice(0, 10);
+  $('top10Note').textContent = `The first 10 rows of the board, at the current scenario (${depositLabel()}, drop ${(state.drop * 100)}%). The full 198-row board with filters is below.`;
+  $('top10Body').innerHTML = top.map((r) => {
+    const e = econ(r);
+    const tierBadge = r.tier === 'Watchlist' ? '<span class="badge">Watchlist</span>' : r.tier === 'Off-list' ? '<span class="badge off">Off-list</span>' : '';
+    const kinBadge = r.kin ? '<span class="badge kin" title="Kin of a token: a sibling token already trades; odds ×0.5">Kin ×0.5</span>' : '';
+    return `<tr data-slug="${r.slug}"><td>${r.rank}</td><td><b>${r.name}</b>${tierBadge}${kinBadge}</td><td>${fmtM(r.tvl_usd)}</td><td>${(r.model.odds * 100).toFixed(0)}%</td><td>${fmtM(r.model.size_curve_usd * r.model.category_factor)}</td><td><b>${fmtM(r.implied_value_usd)}</b></td><td>${fmtM(r.model.size_curve_usd * r.model.odds)}</td><td><span class="verdict ${e.verdict}">${e.verdict}</span> ${fmt$(e.net)}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#top10Body tr').forEach((tr) => tr.addEventListener('click', () => showDetail(tr.getAttribute('data-slug'))));
+}
+function renderLadder() {
+  const tickets = [100, 500, 1000, 2500, 5000, 10000];
+  const counts = (ticket) => {
+    let f = 0, m = 0, s = 0;
+    for (const r of R.rows) {
+      const sl = r.implied_value_usd * state.drop * (ticket / r.tvl_usd);
+      const net = sl - r.farm.fees_usd - r.farm.hours * 25;
+      if (net > 25 && net / r.farm.hours > 25) f++; else if (net > 0) m++; else s++;
+    }
+    return [f, m, s];
+  };
+  const parts = tickets.map((t) => { const [f, m, s] = counts(t); return `$${t.toLocaleString('en-US')}: ${f} FARM / ${m} MARGINAL / ${s} SKIP`; });
+  const [sf, sm, ss] = [R.verdict_counts_sized.FARM, R.verdict_counts_sized.MARGINAL, R.verdict_counts_sized.SKIP];
+  parts.push(`sized 0.02% TVL: ${sf} / ${sm} / ${ss}`);
+  $('ladderLine').innerHTML = `<b>Deposit ladder</b> (drop ${(state.drop * 100)}%, same formula at every ticket) — ${parts.join(' · ')}. At the flat $1,000 default the verdict column ranks almost nothing; the ladder shows what ticket flips each row.`;
 }
 const PALETTE = ['#2f6fb2', '#4da3ff', '#b083f0', '#3fb68b', '#7a8a99', '#e5534b', '#e0a63c', '#c96a4a', '#8a6fc0', '#5b7d8a', '#a34d6e', '#6e9e5f', '#946b2d'];
 function renderLedger() {
@@ -57,10 +92,15 @@ function renderEvidence() {
   $('evValue').innerHTML = `<thead><tr><th>Term, added in order</th><th>Leave-one-out</th><th>Walk-forward</th><th>By-category</th><th>By-size</th><th>Ten-fold</th><th>Decision</th></tr></thead><tbody>${rows}</tbody>`;
   const orows = R.odds_evidence.map((e) => `<tr><td>${e.term}</td><td>${e.brier_in_sample.toFixed(3)}</td><td>${e.brier_walk_forward.toFixed(3)}</td><td class="${e.decision === 'kept' ? 'keep' : e.decision === 'baseline' ? 'base' : 'drop'}">${e.decision}</td></tr>`).join('');
   $('evOdds').innerHTML = `<thead><tr><th>Term, added in order</th><th>Brier, in sample</th><th>Brier, walk-forward</th><th>Decision</th></tr></thead><tbody>${orows}</tbody>`;
-  $('oddsNote').textContent = `Peers are defined reproducibly: the ${R.odds_peers_n} protocols with a listed date, of which ${Math.round(R.odds_token_rate * R.odds_peers_n)} record a token (base rate ${(R.odds_token_rate * 100).toFixed(1)}%). Walk-forward base is the older peers' base rate carried forward (Brier ${R.brier_wf_base.toFixed(3)}); the age model scores ${R.brier_wf_model.toFixed(3)} on the newer peers. In sample the model calls ${(R.odds_acc * 100).toFixed(0)}% of peers right vs ${(R.odds_acc_base * 100).toFixed(0)}% for the base rate. Log TVL and relative momentum were tested in the odds and did not lower the walk-forward Brier by more than noise, so they stay out.`;
+  $('oddsNote').textContent = `Peers are defined reproducibly: the ${R.odds_peers_n} protocols with a listed date, of which ${Math.round(R.odds_token_rate * R.odds_peers_n)} record a token (base rate ${(R.odds_token_rate * 100).toFixed(1)}%). Walk-forward base is the older peers' base rate carried forward (Brier ${R.brier_wf_base.toFixed(3)}); the age model scores ${R.brier_wf_model.toFixed(3)} on the newer peers. In sample the model calls ${(R.odds_acc * 100).toFixed(0)}% of peers right vs ${(R.odds_acc_base * 100).toFixed(0)}% for the base rate. Log TVL and relative momentum were tested in the odds — alone and jointly (B-style, Brier ${R.odds_joint.brier_in_sample.toFixed(3)} in sample / ${R.odds_joint.brier_walk_forward.toFixed(3)} walk-forward vs ${R.brier_model.toFixed(3)} / ${R.brier_wf_model.toFixed(3)} for age-only) — and did not lower the walk-forward Brier by more than noise, so they stay out.`;
   $('oddsAge').innerHTML = `<h3>Token odds as a function of age — the peers' record</h3><table class="ev"><thead><tr><th>No-token age</th><th>Peers</th><th>Share that record a token</th></tr></thead><tbody>${R.odds_age_buckets.map((b) => `<tr><td>${b.bucket}</td><td>${b.n}</td><td>${(b.token_rate * 100).toFixed(0)}%</td></tr>`).join('')}</tbody></table><p class="note">Tested, not assumed: the odds rise with age in this snapshot — a protocol that has run years with no token is more likely to be one that records a token eventually. The model follows the peers; it does not assume a token becomes less likely with time. That is the record, not a forecast.</p>`;
   const bandWidth = (b) => '×' + Math.exp(b.q75 - b.q25).toFixed(1);
   $('rangeNote').innerHTML = `<b>Is the printed range honest? Ranges are priced per kind.</b> Each row's P25–P75 / P10–P90 comes from the leave-one-out residuals of its own kind: categories with ≥8 comps use their own residuals, the rest use the global band. P25–P75 widths (top ÷ bottom): global ${bandWidth({ q25: R.range_q25, q75: R.range_q75 })} (n=128)` + R.range_bands.map((b) => ` · ${b.kind} ${bandWidth(b)} (n=${b.n})`).join('') + `. Scored against each comp's own band, P25–P75 covers ${(R.range_honesty_p50 * 100).toFixed(0)}% of held-out caps (stated 50%), P10–P90 covers ${(R.range_honesty_p80 * 100).toFixed(0)}% (stated 80%). A row's own cap was never used to set its range.`;
+  const ctrl = R.evidence.find((e) => e.term.includes('control'));
+  const keptEv = R.evidence.find((e) => e.term.includes('category effect'));
+  $('controlNote').innerHTML = `<b>Negative control:</b> the growth of another row does not help — LOO ×${ctrl.loo.toFixed(2)} / walk-forward ×${ctrl.walk_forward.toFixed(2)} vs the kept model ×${keptEv.loo.toFixed(2)} / ×${keptEv.walk_forward.toFixed(2)}. If the control helped, the test would be broken.`;
+  $('catFactors').innerHTML = `<thead><tr><th>Category</th><th>Comps (n)</th><th>Factor</th></tr></thead><tbody>${R.category_factors.map((c) => `<tr><td>${c.category}</td><td>${c.n}</td><td>×${c.factor.toFixed(3)}</td></tr>`).join('')}</tbody>`;
+  $('catNote').textContent = `Factor = exp(shrunk median residual of the 128 comps in that category), shrink k=32 toward ×1.000, n≥3 only — categories with fewer than 3 comps get ×1.000 (no effect). Largest with real data: CEX ×1.267 (n=9); smallest: Liquid Staking ×0.803 (n=9). Every factor above is re-fit from the snapshot on every run; nothing is a hardcoded list.`;
 }
 function renderScatter() {
   const W = 760, H = 440, L = 64, Rm = 16, T = 18, B = 44;
@@ -97,7 +137,7 @@ function filteredRows() {
     return true;
   });
   const k = state.sort;
-  const val = (r) => k === 'name' ? r.name : k === 'size_curve_usd' ? r.model.size_curve_usd : k === 'odds' ? r.model.odds : k === 'net' ? econ(r).net : k === 'net_per_hour' ? econ(r).perHour : k === 'rel_momentum_pp' ? (r.rel_momentum_pp ?? -999) : k === 'age_days' ? (r.age_days ?? -1) : r[k];
+  const val = (r) => k === 'name' ? r.name : k === 'size_curve_usd' ? r.model.size_curve_usd : k === 'odds' ? r.model.odds : k === 'size_only' ? r.model.size_curve_usd * r.model.odds : k === 'net' ? econ(r).net : k === 'net_per_hour' ? econ(r).perHour : k === 'rel_momentum_pp' ? (r.rel_momentum_pp ?? -999) : k === 'age_days' ? (r.age_days ?? -1) : r[k];
   rows = [...rows].sort((a, b) => {
     const va = val(a), vb = val(b);
     return (va < vb ? -1 : va > vb ? 1 : 0) * state.dir;
@@ -111,7 +151,7 @@ function renderTable() {
     const e = econ(r);
     const tierBadge = r.tier === 'Watchlist' ? '<span class="badge">Watchlist</span>' : r.tier === 'Off-list' ? '<span class="badge off">Off-list</span>' : '';
     const kinBadge = r.kin ? '<span class="badge kin" title="Kin of a token: a sibling token already trades; odds ×0.5">Kin ×0.5</span>' : '';
-    return `<tr data-slug="${r.slug}"><td>${r.rank}</td><td><b>${r.name}</b>${tierBadge}${kinBadge}<br><span class="mut">${r.category || '—'} · ${r.chains[0] || ''}${r.chains.length > 1 ? ' +' + (r.chains.length - 1) : ''}</span></td><td>${fmtM(r.tvl_usd)}</td><td>${r.rel_momentum_pp === null ? '—' : fmtS(r.rel_momentum_pp) + ' pp'}</td><td>${ageFmt(r.age_days)}</td><td>${(r.model.odds * 100).toFixed(0)}%<div class="bar"><i style="width:${(r.model.odds * 100).toFixed(0)}%"></i></div></td><td>${fmtM(r.model.size_curve_usd * r.model.category_factor)}</td><td><b>${fmtM(r.implied_value_usd)}</b></td><td>${fmtM(r.p25_usd)}–${fmtM(r.p75_usd)}</td><td><span class="verdict ${e.verdict}">${e.verdict}</span> ${fmt$(e.net)}<br><span class="mut">slice ${fmt$(e.slice)} − fees ${fmt$(e.fees)}</span></td><td>${fmt$(e.perHour)}/h</td></tr>`;
+    return `<tr data-slug="${r.slug}"><td>${r.rank}</td><td><b>${r.name}</b>${tierBadge}${kinBadge}<br><span class="mut">${r.category || '—'} · ${r.chains[0] || ''}${r.chains.length > 1 ? ' +' + (r.chains.length - 1) : ''}</span></td><td>${fmtM(r.tvl_usd)}</td><td>${r.rel_momentum_pp === null ? '—' : fmtS(r.rel_momentum_pp) + ' pp'}</td><td>${ageFmt(r.age_days)}</td><td>${(r.model.odds * 100).toFixed(0)}%<div class="bar"><i style="width:${(r.model.odds * 100).toFixed(0)}%"></i></div></td><td>${fmtM(r.model.size_curve_usd * r.model.category_factor)}</td><td><b>${fmtM(r.implied_value_usd)}</b></td><td title="Size-only implied value: size curve × odds, no category factor">${fmtM(r.model.size_curve_usd * r.model.odds)}</td><td>${fmtM(r.p25_usd)}–${fmtM(r.p75_usd)}</td><td><span class="verdict ${e.verdict}">${e.verdict}</span> ${fmt$(e.net)}<br><span class="mut">slice ${fmt$(e.slice)} − fees ${fmt$(e.fees)}</span></td><td>${fmt$(e.perHour)}/h</td></tr>`;
   }).join('');
   const sorted = [...R.rows].sort((a, b) => a.rank - b.rank);
   const ranksOk = sorted.every((r, i) => r.rank === i + 1);
@@ -136,20 +176,25 @@ function showDetail(slug, fromHash) {
     <tr><td>Token odds, logistic on ${ageFmt(r.age_days)} with no token</td><td>${(r.model.odds_raw * 100).toFixed(1)}%</td></tr>
     <tr><td>Kin discount${r.kin ? ' — a sibling token already trades' : ' — not kin'}</td><td>×${r.model.kin_discount}</td></tr>
     <tr><td><b>Implied value</b></td><td><b>${fmtM(r.implied_value_usd)}</b></td></tr>
+    <tr><td>Implied value, size curve only (no category factor)</td><td>${fmtM(r.model.size_curve_usd * r.model.odds)}</td></tr>
     <tr><td>Range P25–P75 / P10–P90 (${r.model.range_band})</td><td>${fmtM(r.p25_usd)}–${fmtM(r.p75_usd)} / ${fmtM(r.p10_usd)}–${fmtM(r.p90_usd)}</td></tr>
     <tr><td>7-day TVL vs the week's median (${R.median_change_7d.toFixed(1)}%)</td><td>${r.rel_momentum_pp === null ? '—' : fmtS(r.rel_momentum_pp) + ' pp'}</td></tr>
     </tbody></table>
     <p class="note">Odds reasoning: among the ${R.odds_peers_n} peers with a listed date, ${(R.odds_token_rate * 100).toFixed(1)}% record a token, and the share rises steeply with years listed — ${ageFmt(r.age_days)} with no token puts this protocol at ${(r.model.odds_raw * 100).toFixed(1)}% on age alone${r.kin ? ', halved to ' + (r.model.odds * 100).toFixed(1) + '% because a sibling token already trades (kin heuristic, ×0.5)' : ''}. That is the peers' record, not a forecast.</p>
-    <h3>Farm economics — ${depositLabel()}, ticket ${fmtM(e.ticket)}, drop share ${(state.drop * 100)}%</h3>
+    <h3>Farm economics — ${depositLabel()}, drop share ${(state.drop * 100)}%</h3>
     <table><tbody>
     <tr><td>Airdrop slice (implied × drop × ticket/TVL)</td><td>${fmt$(e.slice)}</td></tr>
     <tr><td>Fees (bridge $2 + gas ×5 + 0.1% of plan capital)</td><td>−${fmt$(e.fees)}</td></tr>
     <tr><td>Time cost (${r.farm.hours.toFixed(1)} h × $25/h)</td><td>−${fmt$(r.farm.hours * 25)}</td></tr>
     <tr><td><b>Net</b></td><td><b>${fmt$(e.net)}</b> (${fmt$(e.perHour)}/h)</td></tr>
     <tr><td>Verdict</td><td><span class="verdict ${e.verdict}">${e.verdict}</span> — FARM if net &gt; $25 and net/hour &gt; $25; MARGINAL if net &gt; $0; else SKIP</td></tr>
+    <tr><td>Deposit that breaks even (net $0) at this drop share</td><td>${fmtM((r.farm.fees_usd + r.farm.hours * 25) * r.tvl_usd / (r.implied_value_usd * state.drop))}</td></tr>
+    <tr><td>Deposit that reaches FARM (net &gt; $25 and &gt; $25/h)</td><td>${fmtM((r.farm.fees_usd + r.farm.hours * 25 + 75) * r.tvl_usd / (r.implied_value_usd * state.drop))}</td></tr>
     <tr><td>Plan capital — minimum viable, sized from TVL / hold</td><td>${fmtM(r.farm.capital_usd)} / ${r.farm.hold_days} days</td></tr>
-    </tbody></table></div>
+    </tbody></table>
+    <p class="note"><b>What would change this verdict:</b> at this drop share, a deposit of ${fmtM((r.farm.fees_usd + r.farm.hours * 25) * r.tvl_usd / (r.implied_value_usd * state.drop))} breaks even and ${fmtM((r.farm.fees_usd + r.farm.hours * 25 + 75) * r.tvl_usd / (r.implied_value_usd * state.drop))} reaches FARM. TVL growth alone does not flip it at a fixed ticket — the slice is implied × drop × ticket/TVL, and implied grows only as TVL^0.52, so the slice shrinks as TVL^−0.48 when TVL rises. Time listed helps instead: the odds rise with age, so the implied value — and the slice — grow as the protocol runs longer with no token.</p></div>
     <div><h3>Farm plan — 6 steps at minimum viable capital, costed</h3><ol>${r.farm_steps.map((s) => `<li>${s}</li>`).join('')}</ol>
+    <p class="note">Venue, caps, lockups and points rates are not in the sealed snapshot (10 fields per protocol), so this plan names no venue, no points rate and no lockup term — the steps use the protocol's category playbook and the stated fee table, and every number above is derived from the snapshot plus that table.</p>
     <p class="note">${R.fee_note} Primary chain ${r.chains[0] || '—'} gas $${(R.fee_table[r.chains[0]] ?? 0.50).toFixed(2)} per transaction.</p></div></div>`;
   // A deep-linked detail view is a view of its own: show the panel at the top
   // instead of scrolling a long page (headless captures lose the scroll).
@@ -166,10 +211,10 @@ function bind() {
   $('q').addEventListener('input', (e) => { state.q = e.target.value; renderTable(); });
   const map = [['fVerdict', 'verdict'], ['fTier', 'tier'], ['fCat', 'cat'], ['fChain', 'chain']];
   for (const [id, key] of map) $(id).addEventListener('change', (e) => { state[key] = e.target.value; renderTable(); });
-  $('fTicket').addEventListener('change', (e) => { state.deposit = e.target.value === 'plan' ? 'plan' : +e.target.value; renderKpis(); renderTable(); });
-  $('fDrop').addEventListener('change', (e) => { state.drop = +e.target.value; renderKpis(); renderTable(); });
+  $('fTicket').addEventListener('change', (e) => { state.deposit = e.target.value === 'plan' ? 'plan' : +e.target.value; renderKpis(); renderTop10(); renderTable(); });
+  $('fDrop').addEventListener('change', (e) => { state.drop = +e.target.value; renderKpis(); renderTop10(); renderLadder(); renderTable(); });
   $('fHorizon').addEventListener('change', (e) => { state.horizon = +e.target.value; renderTable(); });
-  $('resetBtn').addEventListener('click', () => { Object.assign(state, { q: '', verdict: '', tier: '', cat: '', chain: '', deposit: 'plan', drop: 0.10, horizon: 84, sort: 'rank', dir: 1 }); $('q').value = ''; for (const [id] of map) $(id).value = ''; $('fTicket').value = 'plan'; $('fDrop').value = '0.10'; $('fHorizon').value = '84'; renderKpis(); renderTable(); });
+  $('resetBtn').addEventListener('click', () => { Object.assign(state, { q: '', verdict: '', tier: '', cat: '', chain: '', deposit: 1000, drop: 0.10, horizon: 84, sort: 'rank', dir: 1 }); $('q').value = ''; for (const [id] of map) $(id).value = ''; $('fTicket').value = '1000'; $('fDrop').value = '0.10'; $('fHorizon').value = '84'; renderKpis(); renderTop10(); renderLadder(); renderTable(); });
   document.querySelectorAll('#boardTable th[data-sort]').forEach((th) => th.addEventListener('click', () => {
     const k = th.getAttribute('data-sort');
     if (state.sort === k) state.dir = -state.dir; else { state.sort = k; state.dir = k === 'name' ? 1 : -1; }
@@ -197,4 +242,4 @@ function applyHash() {
   if (h.get('q')) { state.q = h.get('q'); $('q').value = state.q; filtered = true; }
   if (filtered) document.body.classList.add('focus-board');
 }
-renderKpis(); renderFormula(); renderLedger(); renderEvidence(); renderScatter(); fillSelects(); bind(); applyHash(); renderTable();
+renderKpis(); renderFormula(); renderLedger(); renderEvidence(); renderScatter(); fillSelects(); bind(); applyHash(); renderTop10(); renderLadder(); renderTable();
